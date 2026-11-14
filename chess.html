@@ -1,0 +1,538 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chess Game</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg, #141e30, #243b55);
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.game {
+    width: 100%;
+    max-width: 620px;
+    text-align: center;
+}
+
+h1 {
+    margin: 0 0 10px;
+    font-size: 32px;
+}
+
+.subtitle {
+    color: #cbd5e1;
+    margin-bottom: 20px;
+}
+
+#status {
+    background: #ffffff;
+    color: #172033;
+    border-radius: 8px;
+    padding: 13px;
+    margin-bottom: 15px;
+    font-weight: bold;
+}
+
+.board {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    width: 100%;
+    aspect-ratio: 1;
+    border: 5px solid #493524;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.square {
+    border: none;
+    padding: 0;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    aspect-ratio: 1;
+    font-size: clamp(22px, 6.5vw, 48px);
+    line-height: 1;
+    user-select: none;
+}
+
+.light {
+    background: #f0d9b5;
+}
+
+.dark {
+    background: #b58863;
+}
+
+.square.selected {
+    background: #f6e65c;
+}
+
+.square.last-move {
+    background: #cddc79;
+}
+
+.square.legal::after {
+    content: "";
+    position: absolute;
+    width: 25%;
+    height: 25%;
+    border-radius: 50%;
+    background: rgba(30, 90, 45, 0.65);
+}
+
+.square.legal.has-piece::after {
+    width: 85%;
+    height: 85%;
+    background: transparent;
+    border: 5px solid rgba(30, 90, 45, 0.65);
+}
+
+.square.in-check {
+    background: #e75a5a;
+}
+
+.piece {
+    position: relative;
+    z-index: 1;
+    font-family: "Segoe UI Symbol", "DejaVu Sans",
+                 "Arial Unicode MS", serif;
+}
+
+.white-piece {
+    color: #fffdf4;
+    text-shadow: 1px 1px 2px #333, -1px -1px 1px #333;
+}
+
+.black-piece {
+    color: #191919;
+    text-shadow: 0 0 1px white;
+}
+
+.coordinates {
+    position: absolute;
+    bottom: 2px;
+    right: 3px;
+    font-size: 10px;
+    opacity: 0.75;
+    z-index: 2;
+}
+
+.controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+button.action {
+    flex: 1;
+    padding: 12px 8px;
+    border: none;
+    border-radius: 7px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    background: #fbbf24;
+    color: #172033;
+}
+
+button.action:hover {
+    background: #f59e0b;
+}
+
+button.action:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+#moves {
+    background: rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 15px;
+    text-align: left;
+    max-height: 110px;
+    overflow-y: auto;
+    font-size: 14px;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+}
+
+footer {
+    margin-top: 15px;
+    color: #cbd5e1;
+    font-size: 12px;
+}
+
+@media (max-width: 400px) {
+    body {
+        padding: 10px;
+    }
+
+    h1 {
+        font-size: 26px;
+    }
+
+    button.action {
+        font-size: 13px;
+    }
+}
+</style>
+</head>
+
+<body>
+<div class="game">
+    <h1>♟ Chess Game</h1>
+    <div class="subtitle">Two players · One board</div>
+
+    <div id="status">White to move</div>
+
+    <div id="board" class="board"></div>
+
+    <div class="controls">
+        <button class="action" id="undo">↶ Undo</button>
+        <button class="action" id="restart">⟳ Restart</button>
+        <button class="action" id="flip">⇅ Flip Board</button>
+    </div>
+
+    <div id="moves">
+        <strong>Move History:</strong>
+        <div id="history">No moves yet.</div>
+    </div>
+
+    <footer>Choose a piece, then choose its destination.</footer>
+</div>
+
+<!-- Chess.js provides complete legal move and game-rule handling. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+<script>
+const chess = new Chess();
+
+const boardElement = document.getElementById("board");
+const statusElement = document.getElementById("status");
+const historyElement = document.getElementById("history");
+const undoButton = document.getElementById("undo");
+
+const symbols = {
+    w: {
+        k: "♔",
+        q: "♕",
+        r: "♖",
+        b: "♗",
+        n: "♘",
+        p: "♙"
+    },
+    b: {
+        k: "♚",
+        q: "♛",
+        r: "♜",
+        b: "♝",
+        n: "♞",
+        p: "♟"
+    }
+};
+
+let selectedSquare = null;
+let legalTargets = [];
+let flipped = false;
+let lastMove = null;
+
+function renderBoard() {
+    boardElement.innerHTML = "";
+
+    const files = flipped
+        ? ["h", "g", "f", "e", "d", "c", "b", "a"]
+        : ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+    const ranks = flipped
+        ? [1, 2, 3, 4, 5, 6, 7, 8]
+        : [8, 7, 6, 5, 4, 3, 2, 1];
+
+    const checkedKing = getCheckedKing();
+
+    ranks.forEach((rank, row) => {
+        files.forEach((file, col) => {
+            const squareName = file + rank;
+            const piece = chess.get(squareName);
+            const square = document.createElement("button");
+
+            square.type = "button";
+            square.className = "square";
+            square.setAttribute("aria-label", squareName);
+
+            const isLight =
+                ("abcdefgh".indexOf(file) + rank) % 2 === 0;
+
+            square.classList.add(isLight ? "light" : "dark");
+
+            if (selectedSquare === squareName) {
+                square.classList.add("selected");
+            }
+
+            if (
+                lastMove &&
+                (lastMove.from === squareName ||
+                 lastMove.to === squareName)
+            ) {
+                square.classList.add("last-move");
+            }
+
+            if (legalTargets.includes(squareName)) {
+                square.classList.add("legal");
+
+                if (piece) {
+                    square.classList.add("has-piece");
+                }
+            }
+
+            if (checkedKing === squareName) {
+                square.classList.add("in-check");
+            }
+
+            if (piece) {
+                const span = document.createElement("span");
+                span.className = "piece " +
+                    (piece.color === "w"
+                        ? "white-piece"
+                        : "black-piece");
+
+                span.textContent = symbols[piece.color][piece.type];
+                square.appendChild(span);
+            }
+
+            if (col === 0) {
+                const rankLabel = document.createElement("span");
+                rankLabel.className = "coordinates";
+                rankLabel.textContent = rank;
+                square.appendChild(rankLabel);
+            }
+
+            if (row === 7) {
+                const fileLabel = document.createElement("span");
+                fileLabel.className = "coordinates";
+                fileLabel.style.bottom = "auto";
+                fileLabel.style.top = "2px";
+                fileLabel.textContent = file;
+                square.appendChild(fileLabel);
+            }
+
+            square.addEventListener("click", () => {
+                handleSquareClick(squareName);
+            });
+
+            boardElement.appendChild(square);
+        });
+    });
+
+    updateStatus();
+    updateHistory();
+
+    undoButton.disabled = chess.history().length === 0;
+}
+
+function handleSquareClick(squareName) {
+    if (chess.game_over()) {
+        return;
+    }
+
+    const piece = chess.get(squareName);
+
+    // Select a piece belonging to the current player.
+    if (piece && piece.color === chess.turn()) {
+        selectedSquare = squareName;
+
+        legalTargets = chess.moves({
+            square: squareName,
+            verbose: true
+        }).map(move => move.to);
+
+        renderBoard();
+        return;
+    }
+
+    // Attempt to move the selected piece.
+    if (selectedSquare) {
+        const moveOptions = {
+            from: selectedSquare,
+            to: squareName
+        };
+
+        const movingPiece = chess.get(selectedSquare);
+
+        // Ask which piece to promote the pawn to.
+        if (
+            movingPiece &&
+            movingPiece.type === "p" &&
+            ((squareName[1] === "8" && movingPiece.color === "w") ||
+             (squareName[1] === "1" && movingPiece.color === "b"))
+        ) {
+            const choice = prompt(
+                "Promote your pawn to queen, rook, bishop, or knight? (q/r/b/n)",
+                "q"
+            );
+
+            if (choice === null) {
+                return;
+            }
+
+            const promotion = choice.trim().toLowerCase();
+
+            if (!["q", "r", "b", "n"].includes(promotion)) {
+                alert("Invalid choice. Enter q, r, b, or n.");
+                return;
+            }
+
+            moveOptions.promotion = promotion;
+        }
+
+        const result = chess.move(moveOptions);
+
+        if (result) {
+            lastMove = {
+                from: result.from,
+                to: result.to
+            };
+
+            selectedSquare = null;
+            legalTargets = [];
+            renderBoard();
+            return;
+        }
+    }
+
+    selectedSquare = null;
+    legalTargets = [];
+    renderBoard();
+}
+
+function getCheckedKing() {
+    if (!chess.in_check()) {
+        return null;
+    }
+
+    const color = chess.turn();
+    const board = chess.board();
+
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            const piece = board[row][col];
+
+            if (
+                piece &&
+                piece.type === "k" &&
+                piece.color === color
+            ) {
+                return "abcdefgh"[col] + (8 - row);
+            }
+        }
+    }
+
+    return null;
+}
+
+function updateStatus() {
+    let message = chess.turn() === "w"
+        ? "White to move"
+        : "Black to move";
+
+    if (chess.in_checkmate()) {
+        message = "♛ Checkmate! " +
+            (chess.turn() === "w" ? "Black" : "White") +
+            " wins!";
+    } else if (chess.in_stalemate()) {
+        message = "Draw by stalemate!";
+    } else if (chess.in_draw()) {
+        message = "Game drawn!";
+    } else if (chess.in_check()) {
+        message += " — Check!";
+    }
+
+    statusElement.textContent = message;
+}
+
+function updateHistory() {
+    const history = chess.history();
+
+    if (history.length === 0) {
+        historyElement.textContent = "No moves yet.";
+        return;
+    }
+
+    let output = "";
+
+    for (let i = 0; i < history.length; i += 2) {
+        const moveNumber = Math.floor(i / 2) + 1;
+
+        output += moveNumber + ". " + history[i];
+
+        if (history[i + 1]) {
+            output += " " + history[i + 1];
+        }
+
+        output += "   ";
+    }
+
+    historyElement.textContent = output;
+}
+
+document.getElementById("undo").addEventListener("click", () => {
+    if (chess.history().length > 0) {
+        chess.undo();
+
+        lastMove = null;
+        const history = chess.history({ verbose: true });
+
+        if (history.length > 0) {
+            const previous = history[history.length - 1];
+            lastMove = {
+                from: previous.from,
+                to: previous.to
+            };
+        }
+
+        selectedSquare = null;
+        legalTargets = [];
+        renderBoard();
+    }
+});
+
+document.getElementById("restart").addEventListener("click", () => {
+    chess.reset();
+
+    selectedSquare = null;
+    legalTargets = [];
+    lastMove = null;
+    flipped = false;
+
+    renderBoard();
+});
+
+document.getElementById("flip").addEventListener("click", () => {
+    flipped = !flipped;
+    selectedSquare = null;
+    legalTargets = [];
+    renderBoard();
+});
+
+// Start the game.
+renderBoard();
+</script>
+</body>
+</html>
